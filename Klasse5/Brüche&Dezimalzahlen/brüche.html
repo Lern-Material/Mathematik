@@ -1,0 +1,243 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Match the Multiplications</title>
+  <style>
+    :root{--gap:18px;--card-bg:#fff;--accent:#2563eb}
+    body{font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:linear-gradient(180deg,#f5f7fb,#ffffff);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;margin:0}
+    .wrap{width:900px;max-width:96vw;background:var(--card-bg);border-radius:12px;box-shadow:0 8px 24px rgba(10,20,40,0.08);padding:20px;position:relative;overflow:visible}
+    h1{margin:0 0 12px;font-size:20px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:0 24px;position:relative;z-index:2}
+    .column{padding:12px}
+    .col-title{font-size:13px;color:#334155;margin-bottom:8px}
+    .list{display:grid;grid-template-rows:repeat(5,60px);gap:12px}
+    .item{display:flex;align-items:center;justify-content:center;border-radius:8px;background:#f8fafc;border:1px solid #e6eef9;cursor:pointer;user-select:none;position:relative;padding:8px;font-weight:600;z-index:3}
+    .item.selected{outline:3px solid rgba(37,99,235,0.12)}
+    .item.correct{background:linear-gradient(90deg,#ecfdf5,#f0fdf4);border-color:#10b981}
+    .item.wrong{background:linear-gradient(90deg,#fff7ed,#fffbf0);border-color:#f59e0b}
+    .controls{display:flex;gap:10px;align-items:center;margin-top:14px}
+    button{background:var(--accent);color:white;border:0;padding:8px 12px;border-radius:8px;font-weight:600;cursor:pointer}
+    button.secondary{background:#f1f5f9;color:#0f172a}
+    .status{margin-left:auto;font-size:14px;color:#334155}
+    svg.connector{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:1}
+    .caption{margin-top:10px;color:#475569;font-size:13px}
+    @media (max-width:640px){.wrap{padding:14px}.grid{grid-template-columns:1fr;gap:12px}.status{display:none}}
+  </style>
+</head>
+<body>
+  <div class="wrap" role="application" aria-label="Multiplication matching">
+    <svg class="connector" aria-hidden="true"></svg>
+    <h1>Match each equation with its solution</h1>
+    <div class="grid">
+      <div class="column" id="leftCol">
+        <div class="col-title">Equations</div>
+        <div class="list" id="equations"></div>
+      </div>
+      <div class="column" id="rightCol">
+        <div class="col-title">Solutions</div>
+        <div class="list" id="solutions"></div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="newBtn">New Tasks</button>
+      <button id="shuffleBtn" class="secondary">Shuffle</button>
+      <button id="resetBtn">Reset</button>
+      <button id="showBtn" class="secondary">Show answers</button>
+      <div class="status" id="score">0 / 5 correct</div>
+    </div>
+    <div class="caption">Click an equation, then click the solution you think matches. Correct connections turn green; incorrect ones orange. Click a connected item to remove its connection.</div>
+  </div>
+
+  <script>
+    let pairs = [];
+
+    const equationsEl = document.getElementById('equations');
+    const solutionsEl = document.getElementById('solutions');
+    const svg = document.querySelector('svg.connector');
+    const scoreEl = document.getElementById('score');
+
+    let correctMap = {};
+    let leftSelected = null;
+    let connections = {};
+
+    function generatePairs(){
+      pairs = [];
+      const usedResults = new Set();
+      while(pairs.length < 5){
+        const a = Math.floor(Math.random()*10)+2;
+        const b = Math.floor(Math.random()*10)+2;
+        const result = a*b;
+        if(!usedResults.has(result)){
+          pairs.push({a,b});
+          usedResults.add(result);
+        }
+      }
+      correctMap = {};
+      pairs.forEach((p,i)=>{ correctMap[`eq-${i}`] = p.a * p.b });
+    }
+
+    function createItem(text, id, side){
+      const div = document.createElement('div');
+      div.className = 'item';
+      div.textContent = text;
+      div.dataset.id = id;
+      div.dataset.side = side;
+      return div;
+    }
+
+    function render(){
+      equationsEl.innerHTML = '';
+      solutionsEl.innerHTML = '';
+
+      pairs.forEach((p,i)=>{
+        const id = `eq-${i}`;
+        const node = createItem(`${p.a} × ${p.b}`, id, 'left');
+        equationsEl.appendChild(node);
+      });
+
+      const sols = pairs.map((p,i)=>({id:`eq-${i}`, val:p.a*p.b}));
+      shuffleArray(sols);
+      sols.forEach(s=>{
+        const id = `sol-${s.id}`;
+        const node = createItem(s.val, id, 'right');
+        node.dataset.eqid = s.id;
+        solutionsEl.appendChild(node);
+      });
+
+      document.querySelectorAll('.item').forEach(it=>{
+        it.addEventListener('click', onItemClick);
+      });
+
+      redrawLines();
+      updateScore();
+    }
+
+    function onItemClick(e){
+      const el = e.currentTarget;
+      const side = el.dataset.side;
+      if(side === 'left'){
+        if(leftSelected && leftSelected.dataset.id === el.dataset.id){
+          leftSelected.classList.remove('selected'); leftSelected = null; return;
+        }
+        if(leftSelected) leftSelected.classList.remove('selected');
+        leftSelected = el; leftSelected.classList.add('selected');
+      } else {
+        const solId = el.dataset.id;
+        const existing = findConnectionBySolId(solId);
+        if(existing){
+          delete connections[existing.eqId];
+          updateItemClasses(existing.eqId, solId, null);
+          leftSelected && leftSelected.classList.remove('selected');
+          leftSelected = null;
+          redrawLines(); updateScore(); return;
+        }
+
+        if(!leftSelected){
+          el.classList.add('selected'); setTimeout(()=>el.classList.remove('selected'),300);
+          return;
+        }
+
+        const eqId = leftSelected.dataset.id;
+        if(connections[eqId]) delete connections[eqId];
+        connections[eqId] = solId;
+        leftSelected.classList.remove('selected'); leftSelected = null;
+        updateItemClasses(eqId, solId);
+        redrawLines(); updateScore();
+      }
+    }
+
+    function updateItemClasses(eqId, solId){
+      const leftEl = document.querySelector(`.item[data-id="${eqId}"]`);
+      const rightEl = document.querySelector(`.item[data-id="${solId}"]`);
+      [leftEl,rightEl].forEach(el=>{ if(el){ el.classList.remove('correct','wrong'); }});
+      const expected = correctMap[eqId];
+      const actual = rightEl ? Number(rightEl.textContent) : null;
+      if(actual === expected){ leftEl && leftEl.classList.add('correct'); rightEl && rightEl.classList.add('correct'); }
+      else { leftEl && leftEl.classList.add('wrong'); rightEl && rightEl.classList.add('wrong'); }
+    }
+
+    function findConnectionBySolId(solId){
+      for(const [eqId, sId] of Object.entries(connections)){
+        if(sId === solId) return {eqId, solId: sId};
+      }
+      return null;
+    }
+
+    function redrawLines(){
+      while(svg.firstChild) svg.removeChild(svg.firstChild);
+      for(const [eqId, solId] of Object.entries(connections)){
+        const leftEl = document.querySelector(`.item[data-id="${eqId}"]`);
+        const rightEl = document.querySelector(`.item[data-id="${solId}"]`);
+        if(!leftEl || !rightEl) continue;
+        const p1 = centerOf(leftEl);
+        const p2 = centerOf(rightEl);
+        const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+        const offset = 40;
+        const d = `M ${p1.x} ${p1.y} C ${p1.x + offset} ${p1.y} ${p2.x - offset} ${p2.y} ${p2.x} ${p2.y}`;
+        path.setAttribute('d', d);
+        const isCorrect = leftEl.classList.contains('correct');
+        path.setAttribute('stroke', isCorrect ? '#10b981' : '#f59e0b');
+        path.setAttribute('stroke-width', 4);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke-linecap','round');
+        svg.appendChild(path);
+      }
+    }
+
+    function centerOf(el){
+      const rect = el.getBoundingClientRect();
+      const parentRect = document.querySelector('.wrap').getBoundingClientRect();
+      return { x: rect.left - parentRect.left + rect.width/2, y: rect.top - parentRect.top + rect.height/2 };
+    }
+
+    function updateScore(){
+      let correct = 0;
+      const total = Object.keys(correctMap).length;
+      for(const [eqId, solId] of Object.entries(connections)){
+        const leftEl = document.querySelector(`.item[data-id="${eqId}"]`);
+        if(leftEl && leftEl.classList.contains('correct')) correct++;
+      }
+      scoreEl.textContent = `${correct} / ${total} correct`;
+    }
+
+    function shuffleArray(a){
+      for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+      return a;
+    }
+
+    document.getElementById('resetBtn').addEventListener('click', ()=>{
+      connections = {}; leftSelected = null; render();
+    });
+
+    document.getElementById('shuffleBtn').addEventListener('click', ()=>{
+      connections = {}; leftSelected = null; render();
+    });
+
+    document.getElementById('showBtn').addEventListener('click', ()=>{
+      connections = {};
+      for(const eqKey of Object.keys(correctMap)){
+        const desired = correctMap[eqKey];
+        const solEl = Array.from(document.querySelectorAll('.item[data-side="right"]')).find(r=>Number(r.textContent) === desired);
+        if(solEl){ connections[eqKey] = solEl.dataset.id; updateItemClasses(eqKey, solEl.dataset.id); }
+      }
+      redrawLines(); updateScore();
+    });
+
+    document.getElementById('newBtn').addEventListener('click', ()=>{
+      generatePairs();
+      connections = {}; leftSelected = null;
+      render();
+    });
+
+    window.addEventListener('resize', ()=>{ redrawLines(); });
+    window.addEventListener('scroll', ()=>{ redrawLines(); });
+
+    generatePairs();
+    render();
+  </script>
+</body>
+</html>
